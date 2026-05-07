@@ -1,64 +1,64 @@
-from fastapi import APIRouter, HTTPException
-from datetime import datetime, timedelta, time
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 from app.db import supabase
 
-router = APIRouter(prefix="", tags=["appointments"])
+router = APIRouter(prefix="/appointments", tags=["appointments"])
 
-def calculate_slots(doctor, existing_appointments):
+# 예약 생성을 위한 데이터 모델
+class AppointmentCreate(BaseModel):
+    phone: str       # 환자 휴대폰 번호
+    pin: str         # 환자 PIN 번호
+    doctor_id: int   # 예약할 의사 ID
+    reserved_at: str  # 예) "2026-05-07 14:30"
+
+@router.post("/register")
+def register_appointment(data: AppointmentCreate):
+    # [1] 환자 본인 확인
+    patient_res = supabase.table("patients") \
+        .select("id", "name") \
+        .eq("phone", data.phone) \
+        .eq("pin", data.pin) \
+        .execute()
+
+    if not patient_res.data:
+        raise HTTPException(status_code=401, detail="환자 인증에 실패했습니다. 번호와 PIN을 확인해주세요.")
+
+    patient_id = patient_res.data[0]['id']
+    patient_name = patient_res.data[0]['name']
+
+    # [2] 중복 예약 방지 체크 (해당 의사의 해당 시간에 이미 예약이 있는지)
+    existing_check = supabase.table("appointments") \
+        .select("id") \
+        .eq("doctor_id", data.doctor_id) \
+        .eq("appointment_date", data.date) \
+        .eq("appointment_time", data.time) \
+        .execute()
     
-    # 의사 1명의 하루 가용 슬롯을 계산하는 로직
-    slots = []
-    # 문자열로 들어온 시간(09:00:00)을 파이썬 시간 객체로 변환
-    curr = datetime.strptime(doctor['work_start'], "%H:%M:%S").time()
-    end = datetime.strptime(doctor['work_end'], "%H:%M:%S").time()
-    
-    # datetime으로 변환해서 계산 편하게 하기 (날짜는 오늘로 가정)
-    now = datetime.combine(datetime.today(), curr)
-    day_end = datetime.combine(datetime.today(), end)
-    lunch_start = time(12, 0)
-    lunch_end = time(13, 0)
+    if existing_check.data:
+        raise HTTPException(status_code=400, detail="이미 예약이 완료된 시간대입니다.")
 
-    patient_count = 0
-    
-    while now + timedelta(minutes=doctor['consult_time']) <= day_end:
-        # 점심시간 통과
-        if lunch_start <= now.time() < lunch_end:
-            now = datetime.combine(datetime.today(), lunch_end)
-            patient_count = 0
-            continue
-            
-        # 5명 진료 후 10분 휴식
-        if patient_count == 5:
-            now += timedelta(minutes=10)
-            patient_count = 0
-            continue
-        
-        # 이미 예약된 시간인지 확인 (단순 예시)
-        time_str = now.strftime("%H:%M")
-        if time_str not in existing_appointments:
-            slots.append({"doctor_name": doctor['name'], "time": time_str})
+    try:
+        # [3] appointments 테이블에 예약 기록 추가
+        new_appointment = {
+            "patient_id": patient_id,
+            "doctor_id": data.doctor_id,
+            "appointment_date": data.date,
+            "appointment_time": data.time,
+            "status": "confirmed"
+        }
+        supabase.table("appointments").insert(new_appointment).execute()
 
-        now += timedelta(minutes=doctor['consult_time'])
-        patient_count += 1
-        
-    return slots
+        # [4] patients 테이블의 예약 정보 업데이트 (Update reserved_at)
+        reserved_at_combined = f"{data.date} {data.time}"
+        supabase.table("patients").update({
+            "reserved_at": reserved_at_combined,
+            "reserved_doctor_id": data.doctor_id
+        }).eq("id", patient_id).execute()
 
-@router.get("/recommend")
-def get_recommendation(dept: str = None):
-    # 1. DB에서 의사 정보 가져오기
-    query = supabase.table("doctors").select("*")
-    if dept:
-        query = query.eq("department", dept)
-    doctors = query.execute().data
+        return {
+            "status": "success",
+            "message": f"{patient_name}님, {reserved_at_combined}에 예약이 확정되었습니다."
+        }
 
-    # 2. 모든 의사의 가용 슬롯 계산
-    all_available_slots = []
-    for doc in doctors:
-        # 실제로는 해당 날짜의 예약 내역도 가져와서 넘겨줘야 함
-        slots = calculate_slots(doc, []) 
-        all_available_slots.extend(slots)
-
-    # 3. 이 데이터를 OpenAI에게 넘겨서 "가장 빠른 순"으로 문장 만들기
-    # (이 부분에 OpenAI API 호출 로직 추가)
-    
-    return {"available_slots": all_available_slots[:10]} # 일단 상위 10개만 반환
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"예약 처리 중 오류 발생: {str(e)}")

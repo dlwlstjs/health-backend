@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from app.routers import appointments, doctors  # 1. 라우터 파일 임포트
+from app.routers import appointments, doctors, patients  # 1. 라우터 파일 임포트
 
 # 데이터 모델 정의
 class AppointmentRequest(BaseModel):
@@ -15,6 +15,7 @@ app = FastAPI()
 #라우터 등록
 app.include_router(appointments.router)
 app.include_router(doctors.router)
+app.include_router(patients.router)
 
 @app.get("/")
 def home():
