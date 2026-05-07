@@ -10,23 +10,44 @@ class PatientCreate(BaseModel):
     phone: str
     pin: str
 
+def format_phone_number(phone: str) -> str:
+    # 1. 숫자만 추출
+    clean_number = "".join(filter(str.isdigit, phone))
+    
+    if len(clean_number) != 11:
+        raise ValueError("전화번호는 하이픈 제외 11자리 숫자여야 합니다.")
+        
+    # 3. 포맷팅하여 반환
+    return f"{clean_number[:3]}-{clean_number[3:7]}-{clean_number[7:]}"
+
 # 1. 환자 최초 등록
 @router.post("/register")
 def register_patient(data: PatientCreate):
-    # 중복 가입 방지
-    existing = supabase.table("patients").select("id").eq("phone", data.phone).execute()
+    try:
+        # [1] 번호 변환 시도
+        formatted_phone = format_phone_number(data.phone)
+    except ValueError as e:
+        # 11자리가 아닐 경우 400 에러 발생
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    # [2] 중복 가입 방지
+    existing = supabase.table("patients").select("id").eq("phone", formatted_phone).execute()
     if existing.data:
         raise HTTPException(status_code=400, detail="이미 등록된 전화번호입니다.")
 
+    # [3] 데이터 저장
     new_patient = {
         "name": data.name,
-        "phone": data.phone,
-        "pin": data.pin,
-        "reserved_at": None,
-        "reserved_doctor_id": None
+        "phone": formatted_phone,
+        "pin": data.pin
     }
     res = supabase.table("patients").insert(new_patient).execute()
-    return {"status": "success", "message": "환자 등록 성공!", "data": res.data}
+    
+    return {
+        "status": "success", 
+        "message": "환자 등록 성공!", 
+        "data": {"name": data.name, "phone": formatted_phone}
+    }
 
 @router.get("/check-reservation")
 def check_reservation(
