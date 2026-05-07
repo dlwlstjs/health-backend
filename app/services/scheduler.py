@@ -1,6 +1,5 @@
 # app/services/scheduler.py
 from datetime import datetime, timedelta
-from app.services.scheduler import get_doctor_available_slots
 
 def get_doctor_available_slots(doctor, existing_appointments, target_date_str):
 

@@ -49,6 +49,7 @@ def register_patient(data: PatientCreate):
         "data": {"name": data.name, "phone": formatted_phone}
     }
 
+# 환자의 예약 정보 조회
 @router.get("/check-reservation")
 def check_reservation(
     phone: str = Query(..., description="환자 휴대폰 번호 (숫자만 입력 가능)"),
@@ -62,7 +63,7 @@ def check_reservation(
             # 11자리가 아니면 에러 반환
             raise HTTPException(status_code=400, detail=str(e))
 
-        # [2] 변환된 번호로 환자 인증
+        # [2] 변환된 전화번호와 pin번호로 환자 인증
         p_res = supabase.table("patients") \
             .select("id", "name") \
             .eq("phone", formatted_phone) \
