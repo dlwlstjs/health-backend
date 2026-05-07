@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from app.db import supabase
 
@@ -71,13 +71,13 @@ def cancel_appointment(
         raise HTTPException(status_code=404, detail="취소할 예약 내역이 없습니다.")
 
     try:
-        # [3] appointments 테이블에서 데이터 삭제 (진짜 삭제)
+        # [3] appointments 테이블에서 데이터 삭제
         supabase.table("appointments") \
             .delete() \
             .eq("patient_id", patient_id) \
             .execute()
 
-        # [4] patients 테이블의 예약 정보 초기화 (NULL로 업데이트)
+        # [4] patients 테이블의 예약 정보 초기화
         supabase.table("patients").update({
             "reserved_at": None,
             "reserved_doctor_id": None

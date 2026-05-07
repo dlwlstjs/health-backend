@@ -13,7 +13,7 @@ class PatientCreate(BaseModel):
 # 1. 환자 최초 등록
 @router.post("/register")
 def register_patient(data: PatientCreate):
-    # 중복 가입 방지 (휴대폰 번호 기준)
+    # 중복 가입 방지
     existing = supabase.table("patients").select("id").eq("phone", data.phone).execute()
     if existing.data:
         raise HTTPException(status_code=400, detail="이미 등록된 전화번호입니다.")
@@ -28,67 +28,46 @@ def register_patient(data: PatientCreate):
     res = supabase.table("patients").insert(new_patient).execute()
     return {"status": "success", "message": "환자 등록 성공!", "data": res.data}
 
-# 2. 본인 예약 정보 확인 (Phone + PIN 동시 일치)
 @router.get("/check-reservation")
 def check_reservation(
-    phone: str = Query(..., description="휴대폰 번호"),
-    pin: str = Query(..., description="4자리 PIN")
-):
-    res = supabase.table("patients") \
-        .select("name, reserved_at, reserved_doctor_id") \
-        .eq("phone", phone) \
-        .eq("pin", pin) \
-        .execute()
-
-    if not res.data:
-        raise HTTPException(status_code=401, detail="휴대폰 번호 또는 PIN 번호가 일치하지 않습니다.")
-
-    patient_info = res.data[0]
-    
-    if not patient_info['reserved_at']:
-        return {"name": patient_info['name'], "has_reservation": False, "message": "예약 내역이 없습니다."}
-
-    return {
-        "status": "success",
-        "name": patient_info['name'],
-        "reserved_at": patient_info['reserved_at'],
-        "doctor_id": patient_info['reserved_doctor_id']
-    }
-
-# 3. 예약 취소 API (본인 확인 후 예약 삭제)
-@router.delete("/cancel-reservation")
-def cancel_reservation(
-    phone: str = Query(..., description="휴대폰 번호"), 
+    phone: str = Query(..., description="환자 휴대폰 번호"),
     pin: str = Query(..., description="PIN 번호")
 ):
-    # [1] 본인 확인
-    res = supabase.table("patients") \
-        .select("id") \
-        .eq("phone", phone) \
-        .eq("pin", pin) \
-        .execute()
+    try:
+        # [1] 환자 인증
+        p_res = supabase.table("patients").select("id", "name").eq("phone", phone).eq("pin", pin).execute()
+        
+        if not p_res.data:
+            raise HTTPException(status_code=401, detail="인증 실패: 정보를 확인해주세요.")
+        
+        patient_id = p_res.data[0]['id']
+        patient_name = p_res.data[0]['name']
 
-    if not res.data:
-        raise HTTPException(status_code=401, detail="인증 실패: 정보를 다시 확인해주세요.")
+        # doctor_id(name, department) -> doctor_id 외래키를 타고 doctors 테이블의 정보를 가져옴
+        a_res = supabase.table("appointments") \
+            .select("reserved_at, doctors(name, department)") \
+            .eq("patient_id", patient_id) \
+            .execute()
 
-    patient_id = res.data[0]['id']
+        if not a_res.data:
+            return {
+                "status": "success",
+                "message": f"{patient_name}님, 예약 내역이 없습니다."
+            }
 
-    # [2] appointments 테이블에서 데이터 삭제
-    delete_res = supabase.table("appointments") \
-        .delete() \
-        .eq("patient_id", patient_id) \
-        .execute()
+        appointment = a_res.data[0]
+        doctor_info = appointment.get("doctors", {})
 
-    # [3] patients 테이블의 reserved_at 초기화
-    supabase.table("patients") \
-        .update({
-            "reserved_at": None,
-            "reserved_doctor_id": None
-        }) \
-        .eq("id", patient_id) \
-        .execute()
+        return {
+            "status": "success",
+            "data": {
+                "환자명": patient_name,
+                "진료과": doctor_info.get("department", "정보 없음"),
+                "의사명": doctor_info.get("name", "정보 없음"),
+                "예약시간": appointment.get("reserved_at")
+            }
+        }
 
-    return {
-        "status": "success", 
-        "message": "예약이 데이터베이스에서 완전히 삭제되었습니다."
-    }
+    except Exception as e:
+        print(f"조회 상세 에러: {e}")
+        raise HTTPException(status_code=500, detail="정보를 불러오는 중 오류가 발생했습니다.")
